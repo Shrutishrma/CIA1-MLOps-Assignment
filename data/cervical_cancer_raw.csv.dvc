@@ -1,0 +1,5 @@
+outs:
+- md5: 10a7a672b89c33c97bb47787ce313092
+  size: 99296
+  hash: md5
+  path: cervical_cancer_raw.csv
