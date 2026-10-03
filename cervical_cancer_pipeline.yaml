@@ -1,0 +1,347 @@
+# PIPELINE DEFINITION
+# Name: cervical-cancer-mlops-pipeline
+# Description: End-to-end MLOps workflow: data collection -> validation -> training -> evaluation -> conditional deployment
+# Inputs:
+#    evaluated_f1: float [Default: 0.75]
+#    f1_threshold: float [Default: 0.6]
+#    raw_csv_path: str [Default: 'data/cervical_cancer_raw.csv']
+components:
+  comp-condition-1:
+    dag:
+      tasks:
+        deployment-op:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-deployment-op
+          taskInfo:
+            name: deployment-op
+    inputDefinitions:
+      parameters:
+        pipelinechannel--evaluation-op-Output:
+          parameterType: BOOLEAN
+  comp-data-collection-op:
+    executorLabel: exec-data-collection-op
+    inputDefinitions:
+      parameters:
+        raw_csv_path:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        output_csv:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-data-validation-op:
+    executorLabel: exec-data-validation-op
+    inputDefinitions:
+      artifacts:
+        input_csv:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        validated_csv:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-deployment-op:
+    executorLabel: exec-deployment-op
+  comp-evaluation-op:
+    executorLabel: exec-evaluation-op
+    inputDefinitions:
+      artifacts:
+        model_in:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        f1_score:
+          parameterType: NUMBER_DOUBLE
+        f1_threshold:
+          parameterType: NUMBER_DOUBLE
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: BOOLEAN
+  comp-training-op:
+    executorLabel: exec-training-op
+    inputDefinitions:
+      artifacts:
+        validated_csv:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        model_out:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+deploymentSpec:
+  executors:
+    exec-data-collection-op:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - data_collection_op
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef data_collection_op(\n    raw_csv_path: str,\n    output_csv:\
+          \ dsl.Output[dsl.Dataset]\n):\n    import pandas as pd\n\n    df = pd.read_csv(raw_csv_path)\n\
+          \    df.to_csv(output_csv.path, index=False)\n\n"
+        image: python:3.10
+    exec-data-validation-op:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - data_validation_op
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef data_validation_op(\n    input_csv: dsl.Input[dsl.Dataset],\n\
+          \    validated_csv: dsl.Output[dsl.Dataset]\n):\n    import pandas as pd\n\
+          \n    df = pd.read_csv(input_csv.path)\n\n    assert df.shape[0] > 0, \"\
+          Empty dataset!\"\n    assert \"Biopsy\" in df.columns, \"Target column missing!\"\
+          \n\n    df.to_csv(validated_csv.path, index=False)\n\n"
+        image: python:3.10
+    exec-deployment-op:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - deployment_op
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef deployment_op():\n    # Simulated deployment stage for the Kubeflow\
+          \ workflow.\n    # Actual SageMaker deployment is performed separately in\
+          \ Task 5B.\n    return\n\n"
+        image: python:3.10
+    exec-evaluation-op:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - evaluation_op
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef evaluation_op(\n    model_in: dsl.Input[dsl.Model],\n    f1_score:\
+          \ float,\n    f1_threshold: float\n) -> bool:\n\n    # Simulated evaluation\
+          \ gate using the F1-score\n    # obtained during Task 2 model evaluation.\n\
+          \    return f1_score >= f1_threshold\n\n"
+        image: python:3.10
+    exec-training-op:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - training_op
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas' 'numpy'\
+          \ 'scikit-learn' 'imbalanced-learn' 'joblib'  &&  python3 -m pip install\
+          \ --quiet --no-warn-script-location 'kfp==2.17.0' '--no-deps' 'typing-extensions>=3.7.4,<5;\
+          \ python_version<\"3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef training_op(\n    validated_csv: dsl.Input[dsl.Dataset],\n  \
+          \  model_out: dsl.Output[dsl.Model]\n):\n    import pandas as pd\n    import\
+          \ numpy as np\n    import joblib\n\n    from sklearn.impute import SimpleImputer\n\
+          \    from sklearn.preprocessing import StandardScaler\n    from sklearn.svm\
+          \ import SVC\n    from imblearn.over_sampling import SMOTE\n\n    df = (pd.read_csv(validated_csv.path).replace(\"\
+          ?\", np.nan).apply(pd.to_numeric, errors=\"coerce\"))\n\n    y = df.pop(\"\
+          Biopsy\")\n\n    imputer = SimpleImputer(strategy=\"median\")\n    X = pd.DataFrame(imputer.fit_transform(df),columns=df.columns)\n\
+          \n    scaler = StandardScaler()\n    X_scaled = scaler.fit_transform(X)\n\
+          \n    X_res, y_res = SMOTE(random_state=42).fit_resample(X_scaled, y)\n\
+          \    clf = SVC(kernel=\"rbf\",C=1.0,probability=True,random_state=42)\n\n\
+          \    clf.fit(X_res, y_res)\n\n    joblib.dump(clf, model_out.path)\n\n"
+        image: python:3.10
+pipelineInfo:
+  description: 'End-to-end MLOps workflow: data collection -> validation -> training
+    -> evaluation -> conditional deployment'
+  name: cervical-cancer-mlops-pipeline
+root:
+  dag:
+    tasks:
+      condition-1:
+        componentRef:
+          name: comp-condition-1
+        dependentTasks:
+        - evaluation-op
+        inputs:
+          parameters:
+            pipelinechannel--evaluation-op-Output:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: evaluation-op
+        taskInfo:
+          name: condition-1
+        triggerPolicy:
+          condition: inputs.parameter_values['pipelinechannel--evaluation-op-Output']
+            == true
+      data-collection-op:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-data-collection-op
+        inputs:
+          parameters:
+            raw_csv_path:
+              componentInputParameter: raw_csv_path
+        taskInfo:
+          name: data-collection-op
+      data-validation-op:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-data-validation-op
+        dependentTasks:
+        - data-collection-op
+        inputs:
+          artifacts:
+            input_csv:
+              taskOutputArtifact:
+                outputArtifactKey: output_csv
+                producerTask: data-collection-op
+        taskInfo:
+          name: data-validation-op
+      evaluation-op:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-evaluation-op
+        dependentTasks:
+        - training-op
+        inputs:
+          artifacts:
+            model_in:
+              taskOutputArtifact:
+                outputArtifactKey: model_out
+                producerTask: training-op
+          parameters:
+            f1_score:
+              componentInputParameter: evaluated_f1
+            f1_threshold:
+              componentInputParameter: f1_threshold
+        taskInfo:
+          name: evaluation-op
+      training-op:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-training-op
+        dependentTasks:
+        - data-validation-op
+        inputs:
+          artifacts:
+            validated_csv:
+              taskOutputArtifact:
+                outputArtifactKey: validated_csv
+                producerTask: data-validation-op
+        taskInfo:
+          name: training-op
+  inputDefinitions:
+    parameters:
+      evaluated_f1:
+        defaultValue: 0.75
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+      f1_threshold:
+        defaultValue: 0.6
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+      raw_csv_path:
+        defaultValue: data/cervical_cancer_raw.csv
+        isOptional: true
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.17.0
